@@ -262,3 +262,53 @@ func TestNodeStatusIsFilteredGroupedAndReturned(t *testing.T) {
 		t.Fatal("a padded status is accepted")
 	}
 }
+
+// fields adds the properties asked to each node, read in the same page,
+// one not set left out.
+func TestListNodesAddsTheFieldsAsked(t *testing.T) {
+	collector := &fakeCollector{body: `{"data":[
+ {"node_id":"n1","nodename":"fra-dev-lb01","status":"Decommissioning","team_responsible":"Middleware","loc_city":"Frankfurt","cpu_cores":0},
+ {"node_id":"n2","nodename":"par-dev-mail02","status":"Decommissioning","team_responsible":"Network","loc_city":"","cpu_cores":null}
+],"meta":{"total":2}}`}
+	// A column of the summary asked is left out: it is in each row already.
+	nodes, err := newTestService(collector).ListNodes(t.Context(), ListNodesOptions{
+		NodeFilters: NodeFilters{Status: "Decommissioning"}, Fields: []string{"team_responsible", "nodename", "loc_city", "team_responsible", "cpu_cores"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props := collector.requests[0].query.Get("props"); props != strings.Join(nodeSummaryProps, ",")+",team_responsible,loc_city,cpu_cores" {
+		t.Fatalf("props = %s", props)
+	}
+	if strings.Join(nodes.Fields, ",") != "team_responsible,loc_city,cpu_cores" {
+		t.Fatalf("fields read = %v", nodes.Fields)
+	}
+	// A number is kept as the collector gives it, 0 included.
+	if got := nodes.Nodes[0].Fields; got["team_responsible"] != "Middleware" || got["loc_city"] != "Frankfurt" || got["cpu_cores"] != json.Number("0") {
+		t.Fatalf("fields of the first node = %+v", got)
+	}
+	if got := nodes.Nodes[1].Fields; got["team_responsible"] != "Network" || len(got) != 1 {
+		t.Fatalf("fields of the second node, its city not set = %+v", got)
+	}
+	// Without fields, the page is the summary alone.
+	plain, err := newTestService(&fakeCollector{body: testNodeListBody}).ListNodes(t.Context(), ListNodesOptions{})
+	if err != nil || plain.Nodes[0].Fields != nil || plain.Fields != nil {
+		t.Fatalf("a node without fields asked = %+v, %v", plain.Nodes[0], err)
+	}
+}
+
+// A field out of the list, or more than eight, is refused before the call.
+func TestListNodesRefusesFieldsOutOfTheList(t *testing.T) {
+	if _, err := newTestService(&fakeCollector{body: testNodeListBody}).ListNodes(t.Context(), ListNodesOptions{Fields: NodeListFields[:8]}); err != nil {
+		t.Fatalf("eight fields: %v", err)
+	}
+	for _, fields := range [][]string{{"secret"}, {"mem_bytes"}, NodeListFields[:9]} {
+		collector := &fakeCollector{body: testNodeListBody}
+		if _, err := newTestService(collector).ListNodes(t.Context(), ListNodesOptions{Fields: fields}); err == nil {
+			t.Errorf("fields %v: no error", fields)
+		}
+		if len(collector.requests) != 0 {
+			t.Errorf("fields %v: %d collector calls, want none", fields, len(collector.requests))
+		}
+	}
+}

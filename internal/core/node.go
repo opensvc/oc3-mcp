@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -69,6 +70,7 @@ type NodeMembership struct {
 
 type ListNodesOptions struct {
 	NodeFilters
+	Fields []string
 	Limit  int
 	Cursor string
 }
@@ -81,20 +83,22 @@ type NodeList struct {
 	Nodes      []NodeSummary `json:"nodes" jsonschema:"the nodes sorted by node name, then node ID"`
 	NextCursor string        `json:"next_cursor,omitempty" jsonschema:"the opaque cursor to pass with the same filters for the next page"`
 	Truncated  bool          `json:"truncated" jsonschema:"whether matching nodes remain after this page"`
+	Fields     []string      `json:"fields,omitempty" jsonschema:"the properties read for each node, under its fields: one a node lacks there is not set"`
 }
 
 type NodeSummary struct {
-	NodeID       string `json:"node_id" jsonschema:"the collector node ID"`
-	Nodename     string `json:"nodename" jsonschema:"the node name; several clusters may hold the same name"`
-	ClusterID    string `json:"cluster_id,omitempty" jsonschema:"the ID of the OpenSVC cluster of the node"`
-	App          string `json:"app,omitempty" jsonschema:"the collector app the node belongs to"`
-	Env          string `json:"env,omitempty" jsonschema:"the node environment, such as PRD or DEV"`
-	Status       string `json:"status,omitempty" jsonschema:"the node status the collector Nodes page shows, a property the collector users set on the node, whose values each organization chooses, such as Ready, Not Ready, Operating, up or down; it is not reported by the node daemon"`
-	OS           string `json:"os,omitempty" jsonschema:"the operating system name, vendor and release"`
-	AgentVersion string `json:"agent_version,omitempty" jsonschema:"the OpenSVC agent version the node last reported"`
-	LastComm     string `json:"last_comm,omitempty" jsonschema:"the last time the node daemon contacted the collector, in collector local time without a zone"`
-	Frozen       bool   `json:"frozen" jsonschema:"whether the node is frozen, as the collector last received it"`
-	FrozenAt     string `json:"frozen_at" jsonschema:"when the node was frozen, as the collector gives it; empty when the node is not frozen or when the collector does not store the date"`
+	NodeID       string         `json:"node_id" jsonschema:"the collector node ID"`
+	Nodename     string         `json:"nodename" jsonschema:"the node name; several clusters may hold the same name"`
+	ClusterID    string         `json:"cluster_id,omitempty" jsonschema:"the ID of the OpenSVC cluster of the node"`
+	App          string         `json:"app,omitempty" jsonschema:"the collector app the node belongs to"`
+	Env          string         `json:"env,omitempty" jsonschema:"the node environment, such as PRD or DEV"`
+	Status       string         `json:"status,omitempty" jsonschema:"the node status the collector Nodes page shows, a property the collector users set on the node, whose values each organization chooses, such as Ready, Not Ready, Operating, up or down; it is not reported by the node daemon"`
+	OS           string         `json:"os,omitempty" jsonschema:"the operating system name, vendor and release"`
+	AgentVersion string         `json:"agent_version,omitempty" jsonschema:"the OpenSVC agent version the node last reported"`
+	LastComm     string         `json:"last_comm,omitempty" jsonschema:"the last time the node daemon contacted the collector, in collector local time without a zone"`
+	Frozen       bool           `json:"frozen" jsonschema:"whether the node is frozen, as the collector last received it"`
+	FrozenAt     string         `json:"frozen_at" jsonschema:"when the node was frozen, as the collector gives it; empty when the node is not frozen or when the collector does not store the date"`
+	Fields       map[string]any `json:"fields,omitempty" jsonschema:"the properties fields asked, by their collector name: a text not set is absent, a number not set is 0"`
 }
 
 type NodeDetails struct {
@@ -251,6 +255,10 @@ func (s *Service) ListNodes(ctx context.Context, options ListNodesOptions) (Node
 	if err != nil {
 		return NodeList{}, err
 	}
+	fields, err := checkListFields(options.Fields, NodeListFields, nodeSummaryProps)
+	if err != nil {
+		return NodeList{}, err
+	}
 	path, membership, err := s.nodeMemberPath(ctx, options.NodeFilters)
 	if err != nil {
 		return NodeList{}, err
@@ -261,8 +269,8 @@ func (s *Service) ListNodes(ctx context.Context, options ListNodesOptions) (Node
 		return NodeList{}, err
 	}
 
-	var response collectorList[collectorNode]
-	if err := s.client.GetJSON(ctx, path, pageQuery(nodeSummaryProps, "nodename,node_id", filters, limit, offset), &response); err != nil {
+	var response collectorList[collectorRow[collectorNode]]
+	if err := s.client.GetJSON(ctx, path, pageQuery(append(slices.Clone(nodeSummaryProps), fields...), "nodename,node_id", filters, limit, offset), &response); err != nil {
 		return NodeList{}, fmt.Errorf("list nodes: %w", err)
 	}
 	counted, err := pageTotal(response.Meta.Total, len(response.Data), limit)
@@ -270,11 +278,17 @@ func (s *Service) ListNodes(ctx context.Context, options ListNodesOptions) (Node
 		return NodeList{}, fmt.Errorf("list nodes: %w", err)
 	}
 	result := NodeList{Provenance: s.newProvenance(), NodeMembership: membership, Total: counted, Count: len(response.Data), Nodes: make([]NodeSummary, 0, len(response.Data))}
-	for _, node := range response.Data {
+	result.Fields = fields
+	for _, row := range response.Data {
+		node := row.Typed
+		extra, err := rowFields(row.Raw, fields, "")
+		if err != nil {
+			return NodeList{}, fmt.Errorf("list nodes: %w", err)
+		}
 		result.Nodes = append(result.Nodes, NodeSummary{
 			NodeID: node.NodeID, Nodename: node.Nodename, ClusterID: node.ClusterID, App: node.App, Env: node.NodeEnv,
 			Status: node.Status, OS: node.OSConcat, AgentVersion: node.Version, LastComm: node.LastComm,
-			Frozen: collectorBool(node.NodeFrozen), FrozenAt: node.NodeFrozenAt,
+			Frozen: collectorBool(node.NodeFrozen), FrozenAt: node.NodeFrozenAt, Fields: extra,
 		})
 	}
 	if next := offset + len(response.Data); morePages(result.Total, offset, len(response.Data), limit) {

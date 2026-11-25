@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/oc3-mcp/internal/core"
@@ -43,8 +44,9 @@ func (f NodeFiltersInput) core() core.NodeFilters {
 
 type ListNodesInput struct {
 	NodeFiltersInput
-	Limit  int    `json:"limit,omitempty" jsonschema:"optional page size between 1 and 200; defaults to 50"`
-	Cursor string `json:"cursor,omitempty" jsonschema:"optional next_cursor returned by a previous call with the same filters"`
+	Fields []string `json:"fields,omitempty" jsonschema:"optional properties to add to each node, at most 8, among those the description of list_nodes names, such as team_responsible or loc_city"`
+	Limit  int      `json:"limit,omitempty" jsonschema:"optional page size between 1 and 200; defaults to 50"`
+	Cursor string   `json:"cursor,omitempty" jsonschema:"optional next_cursor returned by a previous call with the same filters"`
 }
 
 type CountNodesInput struct {
@@ -97,6 +99,7 @@ func RegisterNodeTools(registrar *Registrar, service *core.Service) error {
 			Name:  "list_nodes",
 			Title: "List collector nodes",
 			Description: "List the nodes the OpenSVC collector knows, sorted by name: node ID, cluster ID, app, environment, status, operating system, agent version, last contact with the collector, freeze flag and freeze date. " +
+				"fields adds to each node, under fields, the properties asked, at most 8, among " + strings.Join(core.NodeListFields, ", ") + ": a property of many nodes, such as their team or their city, is read in one page, not a get_node per node. " +
 				"status is the node status the collector Nodes page shows, a property set by the collector users with values each organization chooses, not reported by the node daemon. " +
 				"Filter by name, tag, compliance ruleset or moduleset attached, cluster, app, environment, status, operating system name, vendor and release, agent version, hardware manufacturer and model, responsible team, country, city, frozen state or freeze date, and by silent_for to find the nodes that stopped reporting; use the cursor to continue a page. " +
 				"To count nodes, or to break them down by a property, use count_nodes instead of reading every page. " +
@@ -106,7 +109,7 @@ func RegisterNodeTools(registrar *Registrar, service *core.Service) error {
 			Annotations: readOnlyClosedWorldAnnotations(),
 		},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input ListNodesInput) (*mcp.CallToolResult, ListNodesOutput, error) {
-			nodes, err := service.ListNodes(ctx, core.ListNodesOptions{NodeFilters: input.core(), Limit: input.Limit, Cursor: input.Cursor})
+			nodes, err := service.ListNodes(ctx, core.ListNodesOptions{NodeFilters: input.core(), Fields: input.Fields, Limit: input.Limit, Cursor: input.Cursor})
 			if err != nil {
 				return nil, ListNodesOutput{}, err
 			}

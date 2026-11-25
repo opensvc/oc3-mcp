@@ -1978,3 +1978,45 @@ func TestAppWriteTools(t *testing.T) {
 		t.Fatalf("changes = %q", changes)
 	}
 }
+
+// fields reaches the collector from the tools, and comes back in each row;
+// a row of another form, with or without fields, tells the collector
+// incompatible, not an error of the tool.
+func TestListToolsAddTheFieldsAsked(t *testing.T) {
+	call := newToolCaller(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		props := r.URL.Query().Get("props")
+		switch {
+		case r.URL.Path == "/nodes" && r.URL.Query().Get("filter") == "status:eq:broken":
+			_, _ = w.Write([]byte(`{"data":[{"node_id":5,"nodename":"n1"}]}`))
+		case r.URL.Path == "/nodes" && strings.HasSuffix(props, ",team_responsible,loc_city"):
+			_, _ = w.Write([]byte(`{"data":[{"node_id":"id-1","nodename":"n1","node_frozen":"F","team_responsible":"DBA","loc_city":"Lyon"}],"meta":{"total":1}}`))
+		case r.URL.Path == "/services" && r.URL.Query().Get("filter") == "svc_status:eq:broken":
+			_, _ = w.Write([]byte(`{"data":[{"svc_id":7,"svcname":"x"}]}`))
+		case r.URL.Path == "/services" && strings.HasSuffix(props, ",svc_comment"):
+			_, _ = w.Write([]byte(`{"data":[{"svc_id":"s1","svcname":"ns/svc/web","svc_comment":"front"}],"meta":{"total":1}}`))
+		default:
+			t.Errorf("unexpected request %s props %q filter %q", r.URL.Path, props, r.URL.Query()["filter"])
+			notFound(w, "unexpected")
+		}
+	})
+	result, nodes := call("list_nodes", map[string]any{"fields": []any{"team_responsible", "loc_city"}})
+	node, _ := nodes["nodes"].([]any)
+	if result.IsError || len(node) != 1 || node[0].(map[string]any)["fields"].(map[string]any)["loc_city"] != "Lyon" {
+		t.Fatalf("list_nodes with fields = %+v", nodes)
+	}
+	result, services := call("list_services", map[string]any{"fields": []any{"svc_comment"}})
+	service, _ := services["services"].([]any)
+	if result.IsError || len(service) != 1 || service[0].(map[string]any)["fields"].(map[string]any)["svc_comment"] != "front" {
+		t.Fatalf("list_services with fields = %+v", services)
+	}
+	for _, broken := range []struct {
+		tool string
+		args map[string]any
+	}{{"list_nodes", map[string]any{"status": "broken"}}, {"list_services", map[string]any{"status": "broken"}}} {
+		result, _ := call(broken.tool, broken.args)
+		if text := result.Content[0].(*mcp.TextContent).Text; !result.IsError || !strings.Contains(text, "collector_incompatible") {
+			t.Errorf("%s on a row of another form = %v %q", broken.tool, result.IsError, text)
+		}
+	}
+}

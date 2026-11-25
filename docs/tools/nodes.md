@@ -47,6 +47,20 @@ Returns one page of nodes, sorted by node name then node ID. Use it to find a
 node, or the nodes of a cluster, app, environment, operating system, hardware,
 team or location. To count nodes, use `count_nodes`.
 
+A property of many nodes, such as their team or their city, is read with
+`fields` in one page rather than a `get_node` per node: `status:
+Decommissioning` with `fields: [team_responsible, loc_city]` lists each node
+with its team and city. At most 8 properties, among those `get_node` reads
+beyond the summary:
+
+`fqdn`, `role`, `type`, `snooze_till`, `updated`, `os_name`, `os_vendor`, `os_release`, `os_kernel`, `os_arch`, `tz`, `last_boot`, `manufacturer`, `model`, `serial`, `cpu_model`, `cpu_vendor`, `cpu_cores`, `cpu_threads`, `cpu_dies`, `cpu_freq`, `mem_banks`, `mem_slots`, `bios_version`, `sp_version`, `team_responsible`, `team_integ`, `team_support`, `loc_country`, `loc_city`, `loc_addr`, `loc_zip`, `loc_building`, `loc_floor`, `loc_room`, `loc_rack`, `warranty_end`, `maintenance_end`, `hw_obs_warn_date`, `hw_obs_alert_date`, `os_obs_warn_date`, `os_obs_alert_date`.
+
+`mem_bytes` is left out: the collector stores MiB under it, which `get_node`
+gives as `mem_mb`. A property of the summary asked, such as `nodename` or
+`status`, is ignored, being in each row already. The values are the
+collector's own: a text not set is absent, a number not set is `0`, a date is
+in collector local time.
+
 #### Collector API
 
 ```text
@@ -121,6 +135,7 @@ language is not exposed.
 | `filterset` | Optional exact filterset name or ID: only the nodes the filterset selects |
 | `ruleset` | Optional exact explicit compliance ruleset name or ID: only the nodes it is attached to |
 | `moduleset` | Optional exact compliance moduleset name or ID: only the nodes it is attached to directly |
+| `fields` | Optional properties to add to each node, at most 8, among those listed above |
 | `limit` | Optional page size, 1 to 200, default 50 |
 | `cursor` | Optional `next_cursor` of a previous call with the same filters |
 
@@ -138,7 +153,8 @@ spaces. A cursor used with other filters is refused.
 | `moduleset` | With `moduleset`, the moduleset it resolved to: `id`, `name` |
 | `total` | Nodes matching the filters, as the collector counts them; `null` when the collector did not count them, see [conventions](README.md#conventions) |
 | `count`, `truncated` | Nodes in this page, and whether more remain |
-| `nodes[]` | `node_id`, `nodename`, `cluster_id`, `app`, `env`, `status`, `os`, `agent_version`, `last_comm`, `frozen`, `frozen_at` |
+| `nodes[]` | `node_id`, `nodename`, `cluster_id`, `app`, `env`, `status`, `os`, `agent_version`, `last_comm`, `frozen`, `frozen_at`, and with `fields`, `fields`: the properties asked by their collector name |
+| `fields` | With `fields`, the properties read for each node: one a node lacks under its `fields` is not set |
 | `next_cursor` | Opaque cursor of the next page, when `truncated` |
 
 Pages follow the collector offsets: a node added or removed between two calls

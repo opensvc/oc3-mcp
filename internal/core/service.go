@@ -92,6 +92,7 @@ var errNodeWithMember = fmt.Errorf("pass node or one of tag, filterset, ruleset 
 
 type ListServicesOptions struct {
 	ServiceFilters
+	Fields []string
 	Node   string
 	Limit  int
 	Cursor string
@@ -106,6 +107,7 @@ type ServiceList struct {
 	Services   []ServiceSummary `json:"services" jsonschema:"the services sorted by name, then service ID"`
 	NextCursor string           `json:"next_cursor,omitempty" jsonschema:"the opaque cursor to pass with the same filters for the next page"`
 	Truncated  bool             `json:"truncated" jsonschema:"whether matching services remain after this page"`
+	Fields     []string         `json:"fields,omitempty" jsonschema:"the properties read for each service, under its fields: one a service lacks there is not set"`
 }
 
 type NodeReference struct {
@@ -115,19 +117,20 @@ type NodeReference struct {
 }
 
 type ServiceSummary struct {
-	SvcID         string   `json:"svc_id" jsonschema:"the collector service ID"`
-	Svcname       string   `json:"svcname" jsonschema:"the service name, an OpenSVC object path such as ns/svc/name; several clusters may hold the same name"`
-	ClusterID     string   `json:"cluster_id,omitempty" jsonschema:"the ID of the OpenSVC cluster of the service"`
-	App           string   `json:"app,omitempty" jsonschema:"the collector app the service belongs to"`
-	Env           string   `json:"env,omitempty" jsonschema:"the service environment, such as PRD or DEV"`
-	Topology      string   `json:"topology,omitempty" jsonschema:"the service topology, such as failover or flex"`
-	AvailStatus   string   `json:"availstatus,omitempty" jsonschema:"the aggregated availability status the collector last received, such as up, down, warn, n/a or undef"`
-	Status        string   `json:"status,omitempty" jsonschema:"the service status, the aggregated overall status the collector last received, such as up, down, warn, n/a or undef, as the collector Services page shows it: whether the service is up or down"`
-	Frozen        string   `json:"frozen,omitempty" jsonschema:"the aggregated freeze state: frozen, unfrozen, mixed or n/a"`
-	Placement     string   `json:"placement,omitempty" jsonschema:"the placement state, such as optimal or non-optimal"`
-	Provisioned   string   `json:"provisioned,omitempty" jsonschema:"the aggregated provisioned state, such as True, False, mixed or n/a"`
-	Nodes         []string `json:"nodes,omitempty" jsonschema:"the nodes of the service configuration"`
-	StatusUpdated string   `json:"status_updated,omitempty" jsonschema:"when the collector last updated the status, as the collector gives it"`
+	SvcID         string         `json:"svc_id" jsonschema:"the collector service ID"`
+	Svcname       string         `json:"svcname" jsonschema:"the service name, an OpenSVC object path such as ns/svc/name; several clusters may hold the same name"`
+	ClusterID     string         `json:"cluster_id,omitempty" jsonschema:"the ID of the OpenSVC cluster of the service"`
+	App           string         `json:"app,omitempty" jsonschema:"the collector app the service belongs to"`
+	Env           string         `json:"env,omitempty" jsonschema:"the service environment, such as PRD or DEV"`
+	Topology      string         `json:"topology,omitempty" jsonschema:"the service topology, such as failover or flex"`
+	AvailStatus   string         `json:"availstatus,omitempty" jsonschema:"the aggregated availability status the collector last received, such as up, down, warn, n/a or undef"`
+	Status        string         `json:"status,omitempty" jsonschema:"the service status, the aggregated overall status the collector last received, such as up, down, warn, n/a or undef, as the collector Services page shows it: whether the service is up or down"`
+	Frozen        string         `json:"frozen,omitempty" jsonschema:"the aggregated freeze state: frozen, unfrozen, mixed or n/a"`
+	Placement     string         `json:"placement,omitempty" jsonschema:"the placement state, such as optimal or non-optimal"`
+	Provisioned   string         `json:"provisioned,omitempty" jsonschema:"the aggregated provisioned state, such as True, False, mixed or n/a"`
+	Nodes         []string       `json:"nodes,omitempty" jsonschema:"the nodes of the service configuration"`
+	StatusUpdated string         `json:"status_updated,omitempty" jsonschema:"when the collector last updated the status, as the collector gives it"`
+	Fields        map[string]any `json:"fields,omitempty" jsonschema:"the properties fields asked, by their collector name; one not set is absent"`
 }
 
 type ServiceDetails struct {
@@ -334,6 +337,10 @@ func (s *Service) ListServices(ctx context.Context, options ListServicesOptions)
 	if err != nil {
 		return ServiceList{}, err
 	}
+	fields, err := checkListFields(options.Fields, ServiceListFields, serviceSummaryProps)
+	if err != nil {
+		return ServiceList{}, err
+	}
 	path, members, err := s.serviceMemberPath(ctx, options.ServiceFilters)
 	if err != nil {
 		return ServiceList{}, err
@@ -360,28 +367,43 @@ func (s *Service) ListServices(ctx context.Context, options ListServicesOptions)
 	}
 
 	var services []collectorService
+	var extras []map[string]any
 	var total *int
 	if node == nil {
-		var response collectorList[collectorService]
-		if err := s.client.GetJSON(ctx, path, pageQuery(serviceSummaryProps, "svcname,svc_id", filters, limit, offset), &response); err != nil {
+		var response collectorList[collectorRow[collectorService]]
+		if err := s.client.GetJSON(ctx, path, pageQuery(append(slices.Clone(serviceSummaryProps), fields...), "svcname,svc_id", filters, limit, offset), &response); err != nil {
 			return ServiceList{}, fmt.Errorf("list services: %w", err)
 		}
-		services, total = response.Data, response.Meta.Total
+		total = response.Meta.Total
+		for _, row := range response.Data {
+			service := row.Typed
+			extra, err := rowFields(row.Raw, fields, "")
+			if err != nil {
+				return ServiceList{}, fmt.Errorf("list services: %w", err)
+			}
+			services, extras = append(services, service), append(extras, extra)
+		}
 	} else {
-		props := make([]string, 0, len(serviceSummaryProps))
-		for _, prop := range serviceSummaryProps {
+		props := make([]string, 0, len(serviceSummaryProps)+len(fields))
+		for _, prop := range append(slices.Clone(serviceSummaryProps), fields...) {
 			if prop == "svc_id" {
 				props = append(props, prop)
 				continue
 			}
 			props = append(props, "services."+prop)
 		}
-		var response collectorList[collectorNodeService]
+		var response collectorList[collectorRow[collectorNodeService]]
 		if err := s.client.GetJSON(ctx, "/services_instances", pageQuery(props, "services.svcname,svc_id", filters, limit, offset), &response); err != nil {
 			return ServiceList{}, fmt.Errorf("list services of node %s: %w", node.Nodename, err)
 		}
 		total = response.Meta.Total
-		for _, row := range response.Data {
+		for _, joined := range response.Data {
+			row := joined.Typed
+			extra, err := rowFields(joined.Raw, fields, "services.")
+			if err != nil {
+				return ServiceList{}, fmt.Errorf("list services of node %s: %w", node.Nodename, err)
+			}
+			extras = append(extras, extra)
 			services = append(services, collectorService{
 				SvcID: row.SvcID, Svcname: row.Svcname, ClusterID: row.ClusterID, SvcApp: row.SvcApp, SvcEnv: row.SvcEnv,
 				SvcTopology: row.SvcTopology, SvcAvailStatus: row.SvcAvailStatus, SvcStatus: row.SvcStatus, SvcFrozen: row.SvcFrozen,
@@ -393,10 +415,11 @@ func (s *Service) ListServices(ctx context.Context, options ListServicesOptions)
 	if err != nil {
 		return ServiceList{}, fmt.Errorf("list services: %w", err)
 	}
-	result := ServiceList{Provenance: s.newProvenance(), Node: node, ServiceMembership: members, Total: counted, Count: len(services), Services: make([]ServiceSummary, 0, len(services))}
-	for _, service := range services {
+	result := ServiceList{Provenance: s.newProvenance(), Node: node, ServiceMembership: members, Total: counted, Count: len(services), Services: make([]ServiceSummary, 0, len(services)), Fields: fields}
+	for i, service := range services {
 		result.Services = append(result.Services, ServiceSummary{
-			SvcID: service.SvcID, Svcname: service.Svcname, ClusterID: service.ClusterID, App: service.SvcApp, Env: service.SvcEnv,
+			Fields: extras[i],
+			SvcID:  service.SvcID, Svcname: service.Svcname, ClusterID: service.ClusterID, App: service.SvcApp, Env: service.SvcEnv,
 			Topology: service.SvcTopology, AvailStatus: service.SvcAvailStatus, Status: service.SvcStatus, Frozen: service.SvcFrozen,
 			Placement: service.SvcPlacement, Provisioned: service.SvcProvisioned, Nodes: strings.Fields(service.SvcNodes),
 			StatusUpdated: service.SvcStatusUpdated,
