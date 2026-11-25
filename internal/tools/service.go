@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/oc3-mcp/internal/core"
@@ -54,9 +55,10 @@ type CountServicesOutput = core.ServiceCount
 
 type ListServicesInput struct {
 	ServiceFiltersInput
-	Node   string `json:"node,omitempty" jsonschema:"optional exact node name or node ID; lists only the services with an instance on that node"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"optional page size between 1 and 200; defaults to 50"`
-	Cursor string `json:"cursor,omitempty" jsonschema:"optional next_cursor returned by a previous call with the same filters"`
+	Node   string   `json:"node,omitempty" jsonschema:"optional exact node name or node ID; lists only the services with an instance on that node"`
+	Fields []string `json:"fields,omitempty" jsonschema:"optional properties to add to each service, at most 8, among those the description of list_services names, such as svc_comment or svc_drpnode"`
+	Limit  int      `json:"limit,omitempty" jsonschema:"optional page size between 1 and 200; defaults to 50"`
+	Cursor string   `json:"cursor,omitempty" jsonschema:"optional next_cursor returned by a previous call with the same filters"`
 }
 
 type ListServicesOutput = core.ServiceList
@@ -139,6 +141,7 @@ func RegisterServiceTools(registrar *Registrar, service *core.Service) error {
 			Name:  "list_services",
 			Title: "List collector services",
 			Description: "List the services the OpenSVC collector knows, sorted by name: service ID, cluster ID, app, environment, topology, status, aggregated availability, freeze, placement and provisioned states, configured nodes and status update time. " +
+				"fields adds to each service, under fields, the properties asked, at most 8, among " + strings.Join(core.ServiceListFields, ", ") + ": a property of many services is read in one page, not a get_service per service. " +
 				"A service is up or down by its status, the aggregated overall status its agents report, as the collector Services page shows it: filter by status for the services down. " +
 				"Filter by text in the name, tag, compliance ruleset or moduleset attached, exact cluster ID, app, environment, status, availability status, topology, freeze state or placement, and by node to list only the services with an instance on it; use the cursor to continue a page. " +
 				"To count services, or to break them down by a state, use count_services instead of reading every page. " +
@@ -148,7 +151,7 @@ func RegisterServiceTools(registrar *Registrar, service *core.Service) error {
 		},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input ListServicesInput) (*mcp.CallToolResult, ListServicesOutput, error) {
 			services, err := service.ListServices(ctx, core.ListServicesOptions{
-				ServiceFilters: input.core(), Node: input.Node, Limit: input.Limit, Cursor: input.Cursor,
+				ServiceFilters: input.core(), Fields: input.Fields, Node: input.Node, Limit: input.Limit, Cursor: input.Cursor,
 			})
 			if err != nil {
 				return nil, ListServicesOutput{}, err

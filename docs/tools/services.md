@@ -50,6 +50,17 @@ Returns one page of services, sorted by name then service ID. Use it to find
 a service, the services down or degraded, or the services of a cluster, app,
 environment or node.
 
+A property of many services is read with `fields` in one page rather than a
+`get_service` per service, among its texts: `svc_comment`, `svc_autostart`,
+`svc_drpnode`, `svc_drpnodes`, `svc_drptype`. With `node`, they are read as
+`services.<property>` of the instances of the node, and given under the same
+names. A text not set is absent. The dates, numbers and rates of
+`get_service` are left out: joined for the services of a node, a date and a
+number not set come in another form, and `get_service` gives the rates in
+percent and the high availability as a boolean. So is the configuration
+text, which `get_service` alone bounds and masks. A property of the summary
+asked is ignored, being in each row already.
+
 #### Collector API
 
 Without `node`:
@@ -128,6 +139,7 @@ language is not exposed.
 | `ruleset` | Optional exact explicit compliance ruleset name or ID: only the services it is attached to |
 | `moduleset` | Optional exact compliance moduleset name or ID: only the services it is attached to directly |
 | `node` | Optional exact node name or node ID: only the services with an instance on it. A name several nodes hold is refused with their node IDs |
+| `fields` | Optional properties to add to each service, at most 8, among those listed above |
 | `limit` | Optional page size, 1 to 200, default 50 |
 | `cursor` | Optional `next_cursor` of a previous call with the same filters |
 
@@ -143,7 +155,8 @@ language is not exposed.
 | `moduleset` | With `moduleset`, the moduleset it resolved to: `id`, `name` |
 | `total` | Services matching the filters, as the collector counts them; `null` when the collector did not count them, see [conventions](README.md#conventions) |
 | `count`, `truncated` | Services in this page, and whether more remain |
-| `services[]` | `svc_id`, `svcname`, `cluster_id`, `app`, `env`, `topology`, `status` (the aggregated overall status), `availstatus`, `frozen` (`frozen`, `unfrozen`, `mixed` or `n/a`), `placement`, `provisioned`, `nodes` (the nodes of the configuration), `status_updated` |
+| `services[]` | `svc_id`, `svcname`, `cluster_id`, `app`, `env`, `topology`, `status` (the aggregated overall status), `availstatus`, `frozen` (`frozen`, `unfrozen`, `mixed` or `n/a`), `placement`, `provisioned`, `nodes` (the nodes of the configuration), `status_updated`, and with `fields`, `fields`: the properties asked by their collector name |
+| `fields` | With `fields`, the properties read for each service: one a service lacks under its `fields` is not set |
 | `next_cursor` | Opaque cursor of the next page, when `truncated` |
 
 Pages follow the collector offsets: a service added or removed between two

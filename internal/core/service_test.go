@@ -200,3 +200,43 @@ func TestServiceStatusIsFilteredGroupedAndReturned(t *testing.T) {
 		t.Fatal("the former overall_status grouping is accepted")
 	}
 }
+
+// fields adds the properties asked to each service, prefixed as the
+// collector joins them when the services of a node are listed.
+func TestListServicesAddsTheFieldsAsked(t *testing.T) {
+	collector := &fakeCollector{body: `{"data":[{"svc_id":"s1","svcname":"ns1/svc/web","svc_comment":"front","svc_drptype":null}],"meta":{"total":1}}`}
+	services, err := newTestService(collector).ListServices(t.Context(), ListServicesOptions{Fields: []string{"svc_comment", "svc_drptype"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props := collector.requests[0].query.Get("props"); !strings.HasSuffix(props, ",svc_comment,svc_drptype") {
+		t.Fatalf("props = %s", props)
+	}
+	if got := services.Services[0].Fields; got["svc_comment"] != "front" || len(got) != 1 || strings.Join(services.Fields, ",") != "svc_comment,svc_drptype" {
+		t.Fatalf("fields = %+v", got)
+	}
+	ofNode := &fakeCollector{bodies: map[string]string{
+		"/nodes/dev2n1":       `{"data":[{"node_id":"n1","nodename":"dev2n1","cluster_id":"c1"}]}`,
+		"/services_instances": `{"data":[{"svc_id":"s1","services.svcname":"ns1/svc/web","services.svc_comment":"front"}],"meta":{"total":1}}`,
+	}}
+	services, err = newTestService(ofNode).ListServices(t.Context(), ListServicesOptions{Node: "dev2n1", Fields: []string{"svc_comment"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props := ofNode.requests[1].query.Get("props"); !strings.HasSuffix(props, ",services.svc_comment") {
+		t.Fatalf("props of the services of a node = %s", props)
+	}
+	if got := services.Services[0].Fields; got["svc_comment"] != "front" {
+		t.Fatalf("fields of the services of a node = %+v", got)
+	}
+	for _, fields := range [][]string{{"svc_config"}, {"svc_availability"}, {"svc_created"}, {"secret"}} {
+		refused := &fakeCollector{}
+		if _, err := newTestService(refused).ListServices(t.Context(), ListServicesOptions{Fields: fields}); err == nil {
+			t.Errorf("fields %v: no error", fields)
+		}
+		if len(refused.requests) != 0 {
+			t.Errorf("fields %v: %d collector calls, want none", fields, len(refused.requests))
+		}
+	}
+
+}

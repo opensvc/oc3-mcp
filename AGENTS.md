@@ -112,7 +112,11 @@ binding; startup must not contact the collector.
 - Design tools around bounded operational use cases, not a one-to-one copy of
   the collector API. No generic HTTP proxy, arbitrary path, or passthrough of
   the collector filter, `props` or `orderby` languages: tools take typed
-  filters that the core translates.
+  filters that the core translates. The one bounded exception is `fields`
+  of `list_nodes` and `list_services`: at most 8 properties from a list
+  named one by one in `internal/core/list_fields.go`, those a `get_*` reads
+  in clear and whose raw value is not misleading; adding one is a decision,
+  not a consequence of a detail read.
 - Register every tool through `Registrar`, not direct `mcp.AddTool` calls.
   Keep stable snake_case names, `list_*` for bounded pages and `get_*` for one
   exact item, concise metadata, typed input/output schemas and accurate
